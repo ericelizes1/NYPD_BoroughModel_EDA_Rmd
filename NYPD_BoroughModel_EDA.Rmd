@@ -1,0 +1,438 @@
+---
+title: "New York City Crime Reports Analysis"
+author: "Eric Elizes"
+date: "4/28/2021"
+output: html_document
+---
+
+## I. Introduction
+
+The goal of this project is to model and analyze New York City crime data to identify trends and correlations between many crime factors.  More specifically, this project intends to analyze crime differences between the five New York City boroughs: Brooklyn, the Bronx, Manhattan, Queens, and Staten Island.  This report explores the distribution and success rate of crime in each of the boroughs, explores the trends in offense level, and, finally, the type of crime by gender and racial occurences.
+
+## II. Background
+
+This project uses the New York Historic Complaint dataset, which contains all valid felony, misdemeanor, and violation crimes reported to the New York City Police Department (NYPD) from 2006 to the end of 2019.  This dataset contains 6.98 million observations, and 35 features, where each observation is a single complaint made to the police.  These features include Report Date, Level of Offense, Type of Crime, Coordinate Location, Suspect and Victim Age Group, Race, and Sex, along with many other features such as Borough and Transit District.  To clean this data, first all columns containing a large number of null values were removed, after which all observations left with null values were omitted.  
+```{r, include=FALSE}
+library(tidyverse)
+library(ggridges)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(ggmap)
+library(rgdal)
+library(broom)
+library(ggthemes)
+library(maps)
+library(maptools)
+library(sf)
+library(spData)
+library(nycgeo)
+library(RColorBrewer)
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+data <- read_csv("c:/Users/ericr/Documents/ECON 216 Files/Final_Project/NYPD_Complaint_Data_Historic.csv")
+data <- select(data, -c("PARKS_NM","HADEVELOPT","HOUSING_PSA","TRANSIT_DISTRICT", "STATION_NAME"))
+data <- na.omit(data)
+```
+
+Similarly, all observations including clearly incorrect information(such as the input of a negative number for age) were removed.  Since report date was decided to be used as the main time indicator for this project, the report data feature was transformed from a character string to a double year.
+
+```{r, echo=TRUE, results='hide'}
+data1 <- data
+data1$RPT_DT <- as.numeric(substr(data$RPT_DT, 7, 10))
+
+data1 <- data1 %>% filter(VIC_AGE_GROUP == "<18" |
+                          VIC_AGE_GROUP == "18-24" |
+                          VIC_AGE_GROUP == "25-44" |
+                          VIC_AGE_GROUP == "45-64" |
+                          VIC_AGE_GROUP == "65+") %>%
+                   filter(SUSP_AGE_GROUP == "<18" |
+                          SUSP_AGE_GROUP == "18-24" |
+                          SUSP_AGE_GROUP == "25-44" |
+                          SUSP_AGE_GROUP == "45-64" |
+                          SUSP_AGE_GROUP == "65+")  
+```
+
+For categorical variables, levels in features such as borough name and sex, among others, were renamed for more accurate interpretation and better visualization. 
+
+```{r, echo=TRUE, results='hide'}
+data1$BORO_NM <- gsub("BROOKLYN", "Brooklyn", data1$BORO_NM)
+data1$BORO_NM <- gsub("MANHATTAN", "Manhattan", data1$BORO_NM)
+data1$BORO_NM <- gsub("BRONX", "Bronx", data1$BORO_NM)
+data1$BORO_NM <- gsub("QUEENS", "Queens", data1$BORO_NM)
+data1$BORO_NM <- gsub("STATEN ISLAND", "Staten Island", data1$BORO_NM)
+
+data1$VIC_SEX <- gsub("M", "Male", data1$VIC_SEX)
+data1$VIC_SEX <- gsub("F", "Female", data1$VIC_SEX)
+data1$VIC_SEX <- gsub("D", "Business/Organization", data1$VIC_SEX)
+data1$VIC_SEX <- gsub("E", "People of the State of NY", data1$VIC_SEX)
+data1$SUSP_SEX <- gsub("M", "Male", data1$SUSP_SEX)
+data1$SUSP_SEX <- gsub("F", "Female", data1$SUSP_SEX)
+data1$SUSP_SEX <- gsub("U", "Unkown", data1$SUSP_SEX)
+
+data1$CRM_ATPT_CPTD_CD <- gsub("COMPLETED", "Completed", data1$CRM_ATPT_CPTD_CD)
+data1$CRM_ATPT_CPTD_CD <- gsub("ATTEMPTED", "Attempted", data1$CRM_ATPT_CPTD_CD)
+
+data1$LAW_CAT_CD <- gsub("MISDEMEANOR", "Misdemeanor", data1$LAW_CAT_CD)
+data1$LAW_CAT_CD <- gsub("VIOLATION", "Violation", data1$LAW_CAT_CD)
+data1$LAW_CAT_CD <- gsub("FELONY", "Felony", data1$LAW_CAT_CD)
+```
+
+## III. Exploratory Data Analysis
+
+This section contains the visualizations and other materials you produced to understand the dataset to help you decide what the main visualizations would be that you would present. You may include histograms, scatterplots, tables, etc.
+
+To begin this Exploratory Data Analysis, various statistics and plots were analyzed to observe the characteristics of specific features of the data.  The intent of this project is to observe the differences in crime between New York City boroughs, and all preliminary visualizations were created under this preconception. To begin, the BORO_NM feature was studied to acquire basic information on the five boroughs of New York.
+
+The first of these preliminary plots observes Complaints Per Year by Borough, which essentially gives a quick overview of the amount of crime using the number of reports in New York City.  From this, it is clear that the amount of crime increases significantly around 2015, although in Staten Island the amount of crime overall is much lower.
+
+```{r, echo = FALSE, message=FALSE}
+ggplot(data1, aes(x = RPT_DT)) + 
+      geom_histogram() +
+      facet_wrap(~ BORO_NM) +
+      labs(title = "NYC Complaints Per Year by Borough", x = "Year", y = "Number of Complaints") +
+      theme_bw()
+```
+
+With these bearings in mind, each of the five boroughs can now be analyzed proportionally to their population.
+
+```{r, echo=FALSE}
+p1 <- ggplot(data1, aes(x = BORO_NM, fill = VIC_SEX)) +
+             geom_bar(position = "fill") +
+             labs(x = "", y = "% of Complaints", fill = "Victim Sex") +
+             theme_bw() +
+             theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=1))
+
+p2 <- ggplot(data1, aes(x = BORO_NM, fill = SUSP_SEX)) + 
+             geom_bar(position = "fill") +
+             labs(x = "", y = "% of Complaints", fill = "Suspect Sex") +
+             theme_bw() +
+             theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=1))
+
+p3 <- ggplot(data1, aes(x = BORO_NM, fill = VIC_AGE_GROUP)) +
+             geom_bar(position = "fill") +
+             labs(x = "", y = "% of Complaints", fill = "Victim Age") +
+             theme_bw() +
+             theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=1))
+
+p4 <- ggplot(data1, aes(x = BORO_NM, fill = SUSP_AGE_GROUP)) +
+             geom_bar(position = "fill") +
+             labs(x = "", y = "% of Complaints", fill = "Suspect Age") +
+             theme_bw() +
+             theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust=1))
+
+grid.arrange(p1, p2, p3, p4,
+             nrow = 2,
+             top = "Number of Complaints per Borough by")
+```
+
+Based on this, it is clear that over the entire dataset, the proportion of sex and age instances of crimes remain relatively constant between boroughs.  The most clear difference is visible in victim sex; in the Bronx and Staten Island the greater proportion of victims are women, while in Manhattan a slightly lesser proportion are.  With regard to age, a greater proportion of those aged 65+ are victims than are suspects.  Overall, the differences in this in the context of the entire dataset are minimal.  However, these proportions may be very different if only specific years are compared.  Since it appears that the amount of crime spikes after 2015, the period before 2015 will be compared with the period after.
+
+To better understand the distribution of crime, the level of offense, whether or not crimes were classified as felonies, misdemeanors, or violations, was analyzed by borough:
+
+```{r, echo=FALSE}
+data2 <- data1 %>% filter(RPT_DT == 2015)
+ggplot(data2, aes(x = BORO_NM, fill = LAW_CAT_CD)) +
+       geom_bar(position = 'dodge') +
+       labs(x = "Borough", y = "Number of Complaints", fill = "Level of Offense",
+            title = "Number of Complaints by Level of Offense and Borough in 2015") +
+       theme_bw()
+```
+
+## IV. Results/Complex Analysis/Discussion
+
+The first visualization was created to better understand the layout of New York City.  While the total number of complaints per borough was previously investigated, the total number of complaints has yet to be viewed on a longitude/latitude coordinate system.  This views the individual boroughs geographically so that previously unseen patterns can be observed:
+
+```{r, echo=FALSE}
+map <- nyc_boundaries(geography = "tract") %>% rename(BORO_NM = borough_name)
+data3 <- data1 %>% filter(RPT_DT == 2015) %>% count(BORO_NM)
+map <- map %>% inner_join(data3, by = "BORO_NM")
+
+ggplot(map, aes(fill = n)) +
+       geom_sf(size = 0.5) +
+       geom_sf(fill = "transparent", color = "gray20", size = 0.8, 
+               data = . %>% group_by(BORO_NM) %>% summarize()) +
+       scale_fill_gradient(low = '#e3c9c5', high = '#ed3939', limits = c(0, NA)) +
+       theme_void() +
+       annotate(geom = "text", x = 932081, y = 180736, label = "Staten Island", color = "black") +
+       annotate(geom = "text", x = 972081, y = 240736, label = "Manhattan", color = "black") +
+       annotate(geom = "text", x = 982081, y = 141000, label = "Brooklyn", color = "black") +
+       annotate(geom = "text", x = 1042081, y = 270736, label = "Bronx", color = "black") +
+       annotate(geom = "text", x = 1062081, y = 230736, label = "Queens", color = "black") +
+       labs(title = "New York City Complaints per Borough in 2015", fill = "")
+```
+
+From this, it is clear that Brooklyn, which appears to be the geographical center of New York City has the largest number of complaints.  Staten Island exhibits a much lower amount of crime, which could be due to it geographical disconnect.  Another possible influence, however, is the population of each of the boroughs.  The amount of crime cannot easily be gauged from the number of complaints because crime is proportional to the population.
+
+This second was inspired by the apparent similarities in age and gender proportions despite a large increase in crime after 2015.  Unlike the previous graph, success rate is with respect to the total crime, so the immediate scope of this can be analyzed.  This plots New York City Crime Success Rate by Year and Borough to identify trends within this New York Historic Complaint dataset.
+
+```{r, echo=FALSE, message=FALSE}
+data4 <- data1 %>% select(RPT_DT, BORO_NM, CRM_ATPT_CPTD_CD) %>%
+                      group_by(BORO_NM, RPT_DT) %>%
+                      summarize(successRate = sum(CRM_ATPT_CPTD_CD == "Completed") / 
+                               (sum(CRM_ATPT_CPTD_CD == "Completed") + 
+                               sum(CRM_ATPT_CPTD_CD == "Attempted")))
+
+ggplot(data4, aes(x = RPT_DT, y = successRate, color = BORO_NM)) +
+    geom_line() +
+    scale_x_continuous(breaks = seq(2006, 2019, by = 3)) +
+    labs(title = "New York City Crime Success Rate from 2006 to 2019 by Borough",
+         x = "Year", y = "Crime Success Rate", color = "Borough") +
+    theme_bw()
+```
+
+This illustrates that the crime success rate began its fall before the number of crimes increased.  This fall slows after 2015 when crime begins to increase since the upwards fluctuation of crime could possibly increase the success rate due to a limited amount of police resources.  However, the reason for the decrease in crime success rate and the increase in crime could be for a plethora of other reasons.  This spurs more questions regarding the reason for the drop, but it is clear that from 2015 to 2016 the decrease slows.  
+
+The second visualization attacks a very different question: the clear relationship between victim sex and the amount of crime.  In all boroughs, the Exploratory Data Analysis found that women were victims in significantly more complaints than males.  One possible correlating factor could be the type of crime.  To better understand this, the top five most frequent offenses for both victim sexes were graphed:
+
+```{r, echo=FALSE}
+data2 <- data1 %>% filter(RPT_DT == 2015)
+data2$OFNS_DESC <- gsub("ASSAULT 3 & RELATED OFFENSES", "Assault III", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("HARRASSMENT 2", "Harassment II", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("FELONY ASSAULT", "Felony Assault", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("OFF. AGNST PUB ORD SENSBLTY &", "Offense Against Public Order", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("CRIMINAL MISCHIEF & RELATED OF", "Criminal Mischief", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("MISCELLANEOUS PENAL LAW", "Misc. Penal Law", data2$OFNS_DESC)
+
+dataMale <- data2 %>% filter(VIC_SEX == "Male") %>%
+                        count(OFNS_DESC) %>%
+                        arrange(desc(n)) %>%
+                        slice_head(n = 5)
+
+dataFemale <- data2 %>% filter(VIC_SEX == "Female") %>%
+                        count(OFNS_DESC) %>%
+                        arrange(desc(n)) %>%
+                        slice_head(n = 5)
+
+p1 <- ggplot(dataMale, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'red') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Male") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p2 <- ggplot(dataFemale, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Female") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+grid.arrange(p1, p2, nrow = 1, top = "Number of Complaints in the Most Frequent Offenses by Victim Sex in 2015")
+```
+
+It is clear that males and females were victims of not only different, but varying degrees of crime.  In both cases, Assault III and Harassment II were the most common, but more females were victims of Harassment II more than they were of Assault III, while for males the case was the opposite.  For male victims, the third most common offense was felony assault, while for females this was the fifth most common offense.  The opposite relation is true for Offenses Against Public Order; the fifth most common offense against male victims was Offense Against Public Order, while this was the third most common offense against females.  The fourth most common offense for both were different.  Males were more frequently victims of Criminal Mischief, while females were victims of Misc. Penal Law.  Another take to undertanding the gender gap can be seen by viewing the same graph, but with regard to suspect sex rather than victim:
+
+```{r, echo=FALSE}
+data2 <- data1 %>% filter(RPT_DT == 2015)
+data2$OFNS_DESC <- gsub("ASSAULT 3 & RELATED OFFENSES", "Assault III", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("HARRASSMENT 2", "Harassment II", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("FELONY ASSAULT", "Felony Assault", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("OFF. AGNST PUB ORD SENSBLTY &", "Offense Against Public Order", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("CRIMINAL MISCHIEF & RELATED OF", "Criminal Mischief", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("MISCELLANEOUS PENAL LAW", "Misc. Penal Law", data2$OFNS_DESC)
+
+dataMale <- data2 %>% filter(SUSP_SEX == "Male") %>%
+                        count(OFNS_DESC) %>%
+                        arrange(desc(n)) %>%
+                        slice_head(n = 5)
+
+dataFemale <- data2 %>% filter(SUSP_SEX == "Female") %>%
+                        count(OFNS_DESC) %>%
+                        arrange(desc(n)) %>%
+                        slice_head(n = 5)
+
+p1 <- ggplot(dataMale, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'red') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Male") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p2 <- ggplot(dataFemale, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Female") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+grid.arrange(p1, p2, nrow = 1, top = "Number of Complaints in the Most Frequent Offenses by Suspect Sex in 2015")
+```
+
+In this graph, Assault III and Harassment II remained in the same exact rankings as they did in the previous chart.  However, in significantly more cases are males the suspects.  From this information, it is clear that the type of offense has a significant correlation to both the suspect and victim sex exclusively.  However, an important consideration to analyze is how the type of offense is influenced by suspect/victim sex combinations:
+
+```{r, echo=FALSE}
+data2 <- data1 %>% filter(RPT_DT == 2015)
+data2$OFNS_DESC <- gsub("ASSAULT 3 & RELATED OFFENSES", "Assault III", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("HARRASSMENT 2", "Harassment II", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("FELONY ASSAULT", "Felony Assault", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("OFF. AGNST PUB ORD SENSBLTY &", "Offense Against Public Order", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("CRIMINAL MISCHIEF & RELATED OF", "Criminal Mischief", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("MISCELLANEOUS PENAL LAW", "Misc. Penal Law", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("ROBBERY", "Robbery", data2$OFNS_DESC)
+
+
+dataMtM <- data2 %>% filter(SUSP_SEX == "Male") %>%
+                     filter(VIC_SEX == "Male") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataMtF <- data2 %>% filter(SUSP_SEX == "Male") %>%
+                     filter(VIC_SEX == "Female") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataFtM <- data2 %>% filter(SUSP_SEX == "Female") %>%
+                     filter(VIC_SEX == "Male") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataFtF <- data2 %>% filter(SUSP_SEX == "Female") %>%
+                     filter(VIC_SEX == "Female") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+
+p1 <- ggplot(dataMtM, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'red') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Males to Males") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p2 <- ggplot(dataMtF, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'red') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Males to Females") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p3 <- ggplot(dataFtM, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Females to Males") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p4 <- ggplot(dataFtF, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Females to Females") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+ 
+
+grid.arrange(p1, p2, p3, p4, nrow = 2, top = "Number of Complaints in the Most Frequent Offenses in 2015 committed by")
+```
+
+This exposes greater patterns, including the first appearance of robbery in the top five most frequent crimes.  Another clear correlation, however, is regarding Misc. Penal Law.  This crime remained one of the top five crimes committed against women overall, but was not one of the top five crimes committed by women.  On the contrary, suspects were frequently male while victims were not.  The combination visualization clearly supports this, since Misc. Penal Law was one of the top five most frequent crimes in the Males to Females category, but appeared in no other.  
+
+The final visualization observes crime type as the previous few visualizations did, but includes aspects of the first two graphics in that it instead analyzes by borough:
+
+```{r, echo=FALSE}
+data2 <- data1 %>% filter(RPT_DT == 2015)
+data2$OFNS_DESC <- gsub("ASSAULT 3 & RELATED OFFENSES", "Assault III", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("HARRASSMENT 2", "Harassment II", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("FELONY ASSAULT", "Felony Assault", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("OFF. AGNST PUB ORD SENSBLTY &", "Offense Against Public Order", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("CRIMINAL MISCHIEF & RELATED OF", "Criminal Mischief", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("MISCELLANEOUS PENAL LAW", "Misc. Penal Law", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("ROBBERY", "Robbery", data2$OFNS_DESC)
+data2$OFNS_DESC <- gsub("OFFENSES AGAINST PUBLIC ADMINI", "Offenses Against Public Admin.", data2$OFNS_DESC)
+
+dataManhattan <- data2 %>% filter(BORO_NM == "Manhattan") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataBrooklyn <- data2 %>% filter(BORO_NM == "Brooklyn") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataQueens <- data2 %>% filter(BORO_NM == "Queens") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataStatenIsland <- data2 %>% filter(BORO_NM == "Staten Island") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+dataBronx <- data2 %>% filter(BORO_NM == "Bronx") %>%
+                     count(OFNS_DESC) %>%
+                     arrange(desc(n)) %>%
+                     slice_head(n = 5)
+
+p1 <- ggplot(dataManhattan, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'red') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Manhattan") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p2 <- ggplot(dataBrooklyn, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'red') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Brooklyn") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p3 <- ggplot(dataQueens, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Queens") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p4 <- ggplot(dataStatenIsland, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Staten Island") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+
+p5 <- ggplot(dataBronx, aes(x = reorder(OFNS_DESC, -n), y = n)) +
+             geom_bar(stat = 'identity', fill = 'blue') +
+             ylim(0, 15500) +
+             labs(x = "", y = "", title = "Bronx") +
+             theme_classic() +
+             theme(axis.text.x = element_text(angle = 20, vjust = 1, hjust=1),
+                   plot.title = element_text(hjust = 0.5, size = 10, face = "bold"))
+ 
+
+grid.arrange(p1, p2, p3, p4, p5, nrow = 2, top = "Number of Complaints in the Most Frequent Offenses in 2015 committed in")
+```
+
+Evident by these graphs, Criminal Mischief is one of the top five most common crimes only in Staten Island.  In all cases, Harassment II and Assault III were in the top five most frequent offenses, and in every case except for Staten Island was Felony Assault the third most frequent offense.  In Staten Island, Offense Against Public Order was third.  In Manhattan and the Bronx Offense Against Public Administration were in the top five most frequent offenses, while in Brooklyn and Queens Misc. Penal Law took this spot instead.  These differences in the types of crimes could have a significant influence on the success of crimes, and maybe even the amount of crime, or gender occurrences, in different areas.
+
+## V. Conclusion
+
+This project analyzed occurrences of crime complaints by borough, victim sex, suspect sex, and type of crime.  A wide range of phenomenons were exposed.  It was first made clear that in all boroughs the number of complaints spiked in 2015.  In correlation with this increase, the proportion of complaints by victim sex, suspect sex, victim age, and suspect age remained proportional.  However, when analyzing by borough, different trends became clear.  Aside from the large difference in crime complaints by borough, boroughs differed in proportion of the level of offense.
+
+This spurs a peculiar question; is the distribution of crime or the varying proportions of level of offense related to the types of crime?  After further analysis, it became quite clear that the types of crime certainly differ.  By analyzing the top five most frequent crimes, the differences between the boroughs could be analyzed.  Similarly, analyzing the top five most frequent crimes by gender occurrences allowed another phenomenon, the clear skew of victim and suspect sex, were analyzed.
+
+However, further investigation truly exposed the limits of the data.  This data alone could not explain why women were victims most.  Neither could it alone explain why men were suspects more.  Are women more likely to report?  Why did crime success fall in 2015?  Did any laws, funding, or classifications change that could have altered this?  With regard to the distribution of crime per borough, is this the most accurate way to approach this, or would analyzing by district as opposed to county expose "hotspots" that cannot currently be seen?  With more time and additional data I would investigate these venues further to better understand crime in New York City as a whole.
+
+## VI. Appendix
+
+``` {r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
